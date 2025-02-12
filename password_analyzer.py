@@ -3,9 +3,11 @@ import hashlib
 import re
 import csv
 import json
+import sys
 from typing import Dict, List
 from dataclasses import dataclass
 from pathlib import Path
+from zxcvbn import zxcvbn
 
 @dataclass
 class PasswordPolicy:
@@ -19,7 +21,7 @@ class PasswordPolicy:
 class PasswordAnalyzer:
     def __init__(self, policy: PasswordPolicy):
         self.policy = policy
-        
+
     def check_password(self, password: str) -> Dict[str, bool]:
         """Analyze a password against the defined policy."""
         results = {
@@ -33,10 +35,9 @@ class PasswordAnalyzer:
         return results
 
     def check_haveibeenpwned(self, password: str) -> Dict[str, any]:
-        """Check if password has been exposed in data breaches using HaveIBeenPwned API."""
+        """Check if password has been exposed in data breaches using the HaveIBeenPwned API."""
         password_hash = hashlib.sha1(password.encode()).hexdigest().upper()
         prefix, suffix = password_hash[:5], password_hash[5:]
-        
         try:
             response = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}")
             if response.status_code == 200:
@@ -61,73 +62,79 @@ class PasswordAnalyzer:
             }
 
     def generate_report(self, password: str) -> Dict[str, any]:
-        """Generate a comprehensive password analysis report."""
+        """Generate a comprehensive password analysis report using zxcvbn for strength estimation."""
         policy_check = self.check_password(password)
         breach_check = self.check_haveibeenpwned(password)
-        
-        entropy = self._calculate_entropy(password)
-        
-        return {
+        # Use zxcvbn for advanced password strength analysis
+        zx_result = zxcvbn(password)
+        report = {
             "policy_compliance": policy_check,
             "breach_status": breach_check,
             "strength_metrics": {
                 "length": len(password),
-                "entropy": entropy,
-                "strength_score": self._calculate_strength_score(password, policy_check, entropy)
+                "entropy": zx_result["entropy"],
+                "strength_score": zx_result["score"] * 25,  # converting score (0-4) to a 0-100 scale
+                "zxcvbn_details": {
+                    "guesses": zx_result["guesses"],
+                    "guesses_log10": zx_result["guesses_log10"],
+                    "crack_times_seconds": zx_result["crack_times_seconds"],
+                    "calc_time": zx_result["calc_time"],
+                }
             },
-            "recommendations": self._generate_recommendations(policy_check, breach_check)
+            "zxcvbn_feedback": zx_result["feedback"],
+            "recommendations": self._generate_recommendations(
+                policy_check, 
+                breach_check, 
+                zx_result["feedback"]
+            )
         }
+        return report
 
     def batch_analyze(self, input_file: str, output_format: str = 'json') -> None:
         """
         Analyze multiple passwords from a file and save results.
         
         Args:
-            input_file: Path to file containing passwords (one per line)
-            output_format: 'json' or 'csv' for the output format
+            input_file: Path to a file containing passwords (one per line).
+            output_format: 'json', 'csv', or 'html' for the output format.
         """
         input_path = Path(input_file)
         if not input_path.exists():
             raise FileNotFoundError(f"Input file {input_file} not found")
-            
+        
         # Read passwords from file
         with open(input_file, 'r') as f:
             passwords = [line.strip() for line in f if line.strip()]
             
-        # Analyze each password
         results = []
         total = len(passwords)
-        
         print(f"Starting batch analysis of {total} passwords...")
         
         for i, password in enumerate(passwords, 1):
             print(f"Analyzing password {i}/{total}...", end='\r')
             report = self.generate_report(password)
-            
-            # Add masked password to report (showing only first and last character)
+            # Mask the password: show first and last character, with asterisks in between
             if len(password) > 4:
                 masked = f"{password[0]}{'*' * (len(password)-2)}{password[-1]}"
             else:
                 masked = "****"
-                
             report["masked_password"] = masked
             results.append(report)
-            
+        
         print("\nAnalysis complete!")
         
         # Save results based on chosen format
         output_path = input_path.with_suffix(f'.analysis.{output_format}')
-        
         if output_format == 'json':
             self._save_json_report(results, output_path)
         elif output_format == 'csv':
             self._save_csv_report(results, output_path)
+        elif output_format == 'html':
+            self._save_html_report(results, output_path)
         else:
-            raise ValueError("Output format must be 'json' or 'csv'")
+            raise ValueError("Output format must be 'json', 'csv', or 'html'")
             
         print(f"Results saved to {output_path}")
-        
-        # Print summary statistics
         self._print_batch_summary(results)
 
     def _save_json_report(self, results: List[Dict], output_path: Path) -> None:
@@ -137,7 +144,7 @@ class PasswordAnalyzer:
 
     def _save_csv_report(self, results: List[Dict], output_path: Path) -> None:
         """Save results in CSV format."""
-        # Flatten the nested dictionary structure for CSV
+        # Flatten nested report data for CSV
         flattened_results = []
         for result in results:
             flat_result = {
@@ -152,11 +159,82 @@ class PasswordAnalyzer:
             }
             flattened_results.append(flat_result)
             
-        # Write to CSV
         with open(output_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=flattened_results[0].keys())
             writer.writeheader()
             writer.writerows(flattened_results)
+
+    def _save_html_report(self, results: List[Dict], output_path: Path) -> None:
+        """Save results in an HTML report format."""
+        # Flatten nested report data similar to the CSV export
+        flattened_results = []
+        for result in results:
+            flat_result = {
+                "masked_password": result["masked_password"],
+                "meets_all_requirements": result["policy_compliance"]["meets_all_requirements"],
+                "length": result["strength_metrics"]["length"],
+                "entropy": result["strength_metrics"]["entropy"],
+                "strength_score": result["strength_metrics"]["strength_score"],
+                "compromised": result["breach_status"]["compromised"],
+                "breach_count": result["breach_status"]["breach_count"],
+                "recommendations": "; ".join(result["recommendations"])
+            }
+            flattened_results.append(flat_result)
+        
+        # Build an HTML page with a table to display results
+        html_content = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Password Analysis Report</title>
+<style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h1 { text-align: center; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    tr:nth-child(even) { background-color: #fafafa; }
+</style>
+</head>
+<body>
+<h1>Password Analysis Report</h1>
+<table>
+    <thead>
+        <tr>
+            <th>Masked Password</th>
+            <th>Policy Compliant</th>
+            <th>Length</th>
+            <th>Entropy</th>
+            <th>Strength Score</th>
+            <th>Compromised</th>
+            <th>Breach Count</th>
+            <th>Recommendations</th>
+        </tr>
+    </thead>
+    <tbody>
+"""
+        for item in flattened_results:
+            html_content += f"""
+        <tr>
+            <td>{item['masked_password']}</td>
+            <td>{'Yes' if item['meets_all_requirements'] else 'No'}</td>
+            <td>{item['length']}</td>
+            <td>{item['entropy']:.2f}</td>
+            <td>{item['strength_score']}</td>
+            <td>{'Yes' if item['compromised'] else 'No'}</td>
+            <td>{item['breach_count'] if item['breach_count'] is not None else 'N/A'}</td>
+            <td>{item['recommendations']}</td>
+        </tr>
+"""
+        html_content += """
+    </tbody>
+</table>
+</body>
+</html>
+"""
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
 
     def _print_batch_summary(self, results: List[Dict]) -> None:
         """Print summary statistics for batch analysis."""
@@ -172,31 +250,10 @@ class PasswordAnalyzer:
         print(f"Found in data breaches: {compromised} ({(compromised/total)*100:.1f}%)")
         print(f"Average strength score: {avg_score:.1f}/100")
 
-    def _calculate_entropy(self, password: str) -> float:
-        """Calculate password entropy as a measure of complexity."""
-        char_sets = {
-            'lowercase': len(set(re.findall(r'[a-z]', password))),
-            'uppercase': len(set(re.findall(r'[A-Z]', password))),
-            'numbers': len(set(re.findall(r'\d', password))),
-            'special': len(set(password) & set(self.policy.special_chars))
-        }
-        pool_size = sum(char_sets.values())
-        return len(password) * (pool_size / 4) * 2
-
-    def _calculate_strength_score(self, password: str, policy_check: Dict[str, bool], entropy: float) -> int:
-        """Calculate a password strength score (0-100)."""
-        base_score = min(100, entropy / 2)
-        
-        # Penalties for policy violations
-        if not policy_check["meets_all_requirements"]:
-            base_score *= 0.8
-        
-        return round(max(0, min(100, base_score)))
-
-    def _generate_recommendations(self, policy_check: Dict[str, bool], breach_check: Dict[str, any]) -> List[str]:
-        """Generate specific recommendations for password improvement."""
+    def _generate_recommendations(self, policy_check: Dict[str, bool], breach_check: Dict[str, any],
+                                  zxcvbn_feedback: Dict[str, any]) -> List[str]:
+        """Generate recommendations for password improvement, including zxcvbn feedback."""
         recommendations = []
-        
         if not policy_check["meets_all_requirements"]:
             if not policy_check["meets_length"]:
                 recommendations.append(f"Increase password length to at least {self.policy.min_length} characters")
@@ -211,11 +268,21 @@ class PasswordAnalyzer:
                 
         if breach_check["compromised"]:
             recommendations.append("This password has been exposed in data breaches. Change it immediately!")
-            
-        return recommendations if recommendations else ["Password meets all requirements!"]
+        
+        # Incorporate zxcvbn feedback if available
+        if zxcvbn_feedback:
+            warning = zxcvbn_feedback.get("warning")
+            suggestions = zxcvbn_feedback.get("suggestions", [])
+            if warning:
+                recommendations.append(warning)
+            recommendations.extend(suggestions)
+        
+        if not recommendations:
+            recommendations.append("Password meets all requirements!")
+        return recommendations
 
 def main():
-    # Example usage
+    # Define a sample password policy
     policy = PasswordPolicy(
         min_length=12,
         require_uppercase=True,
@@ -226,33 +293,39 @@ def main():
     
     analyzer = PasswordAnalyzer(policy)
     
-    # Check if file path is provided as argument
-    import sys
+    # If a file path is provided as a command-line argument, run in batch mode.
     if len(sys.argv) > 1:
-        # Batch mode
         input_file = sys.argv[1]
         output_format = sys.argv[2] if len(sys.argv) > 2 else 'json'
         analyzer.batch_analyze(input_file, output_format)
     else:
-        # Interactive mode
+        # Interactive mode for a single password
         password = input("Enter password to analyze: ")
         report = analyzer.generate_report(password)
         
-        # Pretty print the report
         print("\nPassword Analysis Report")
         print("=" * 50)
-        print(f"\nPolicy Compliance:")
+        print("\nPolicy Compliance:")
         for check, passed in report["policy_compliance"].items():
             print(f"- {check.replace('_', ' ').title()}: {'✓' if passed else '✗'}")
         
-        print(f"\nBreach Status: {report['breach_status']['status']}")
+        print("\nBreach Status:")
+        print(f"- {report['breach_status']['status']}")
         if report['breach_status']['breach_count']:
             print(f"Found in {report['breach_status']['breach_count']} breaches!")
         
-        print(f"\nStrength Metrics:")
+        print("\nStrength Metrics:")
         print(f"- Length: {report['strength_metrics']['length']}")
         print(f"- Entropy: {report['strength_metrics']['entropy']:.2f}")
         print(f"- Overall Strength Score: {report['strength_metrics']['strength_score']}/100")
+        
+        print("\nZXCVBN Feedback:")
+        feedback = report.get("zxcvbn_feedback", {})
+        if feedback.get("warning"):
+            print(f"- Warning: {feedback.get('warning')}")
+        if feedback.get("suggestions"):
+            for suggestion in feedback.get("suggestions"):
+                print(f"- Suggestion: {suggestion}")
         
         print("\nRecommendations:")
         for rec in report["recommendations"]:
