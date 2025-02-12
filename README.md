@@ -10,15 +10,15 @@ A powerful password analysis tool that helps security professionals and organiza
 
 - **Comprehensive Password Analysis**
   - Policy compliance checking
-  - Password strength scoring
+  - Password strength scoring with advanced estimation using [zxcvbn](https://github.com/dropbox/zxcvbn)
   - Entropy calculation
-  - Breach detection using HaveIBeenPwned API
+  - Breach detection using the HaveIBeenPwned API
   - Detailed recommendations for improvement
 
 - **Flexible Processing Options**
   - Interactive single password analysis
   - Batch processing of password lists
-  - Multiple output formats (JSON, CSV)
+  - Multiple output formats (JSON, CSV, HTML)
 
 - **Security-First Design**
   - Password masking in reports
@@ -30,9 +30,11 @@ A powerful password analysis tool that helps security professionals and organiza
 
 - Python 3.8+
 - Required packages:
+  ```txt
+  requests>=2.25.0
+  zxcvbn>=4.4.28
   ```
-  requests>=2.28.0
-  ```
+*(For Python 3.6 support, you might also need: dataclasses>=0.8)*
 
 ## 🔧 Installation
 
@@ -56,8 +58,7 @@ A powerful password analysis tool that helps security professionals and organiza
 ## 💻 Usage
 
 ### Interactive Mode
-
-Run the script without arguments to analyze a single password:
+Run the script without arguments to analyze a single password. Here's an example output:
 
 ```bash
 $ python password_analyzer.py
@@ -81,13 +82,17 @@ Strength Metrics:
 - Length: 14
 - Entropy: 45.60
 - Overall Strength Score: 78/100
+- Estimated Crack Times:
+  - Online Throttled: 5 hours
+  - Unthrottled: 15 minutes
+  - Offline Fast Hash: 0.5 seconds
 
 Recommendations:
 - This password has been exposed in data breaches. Change it immediately!
+- Consider using a longer passphrase with more unique characters
 ```
 
 ### Batch Mode
-
 Analyze multiple passwords from a file:
 
 ```bash
@@ -105,8 +110,19 @@ Average strength score: 58.4/100
 Results saved to passwords.analysis.json
 ```
 
-### Input File Format
+Available output formats:
+```bash
+# JSON output (default)
+python password_analyzer.py passwords.txt
 
+# CSV output
+python password_analyzer.py passwords.txt csv
+
+# HTML output
+python password_analyzer.py passwords.txt html
+```
+
+### Input File Format
 Create a text file with one password per line:
 ```
 MyPassword123!
@@ -118,46 +134,59 @@ TestPass789#
 
 #### JSON Output
 ```json
-{
-  "results": [
-    {
-      "masked_password": "M*********!",
-      "policy_compliance": {
-        "meets_length": true,
-        "has_uppercase": true,
-        "has_lowercase": true,
-        "has_numbers": true,
-        "has_special": true,
-        "meets_all_requirements": true
-      },
-      "breach_status": {
-        "compromised": true,
-        "breach_count": 120000,
-        "status": "Password found in data breaches"
-      },
-      "strength_metrics": {
-        "length": 11,
-        "entropy": 38.5,
-        "strength_score": 65
-      },
-      "recommendations": [
-        "This password has been exposed in data breaches. Change it immediately!"
-      ]
-    }
-  ]
-}
+[
+  {
+    "masked_password": "M*********!",
+    "policy_compliance": {
+      "meets_length": true,
+      "has_uppercase": true,
+      "has_lowercase": true,
+      "has_numbers": true,
+      "has_special": true,
+      "meets_all_requirements": true
+    },
+    "strength_metrics": {
+      "length": 12,
+      "entropy": 45.6,
+      "strength_score": 85,
+      "zxcvbn_details": {
+        "guesses": 123456789,
+        "guesses_log10": 8.09,
+        "crack_times_seconds": {
+          "online_throttling_100_per_hour": 12345,
+          "offline_slow_hashing_1e4_per_second": 123,
+          "offline_fast_hashing_1e10_per_second": 12
+        },
+        "calc_time": 0.01
+      }
+    },
+    "breach_status": {
+      "compromised": false,
+      "breach_count": 0,
+      "status": "Password not found in known data breaches"
+    },
+    "zxcvbn_feedback": {
+      "warning": "",
+      "suggestions": []
+    },
+    "recommendations": [
+      "Password meets all requirements!"
+    ]
+  }
+]
 ```
 
 #### CSV Output
 ```csv
 masked_password,meets_all_requirements,length,entropy,strength_score,compromised,breach_count,recommendations
 M*********!,true,11,38.5,65,true,120000,"This password has been exposed in data breaches. Change it immediately!"
+S**********4,false,10,22.4,35,false,0,"Increase password length to at least 12 characters; Add special characters"
 ```
+
 
 ## 🔒 Password Policy Configuration
 
 Modify the `PasswordPolicy` settings in `password_analyzer.py` to match your organization's requirements:
-
 ```python
 policy = PasswordPolicy(
     min_length=12,
@@ -180,7 +209,7 @@ policy = PasswordPolicy(
 ## 📝 Future Enhancements
 
 - [ ] Parallel processing for large password lists
-- [ ] Additional output formats (PDF, HTML)
+- [ ] Additional output formats (PDF, enhanced HTML)
 - [ ] Custom policy templates (NIST, OWASP, custom)
 - [ ] Password generation suggestions
 - [ ] Web interface with Flask/FastAPI
