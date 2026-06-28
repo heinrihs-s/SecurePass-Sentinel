@@ -4,7 +4,7 @@ import re
 import csv
 import json
 import sys
-from typing import Dict, List
+from typing import Any, Dict, List
 from dataclasses import dataclass
 from pathlib import Path
 from zxcvbn import zxcvbn
@@ -34,7 +34,7 @@ class PasswordAnalyzer:
         results["meets_all_requirements"] = all(results.values())
         return results
 
-    def check_haveibeenpwned(self, password: str) -> Dict[str, any]:
+    def check_haveibeenpwned(self, password: str) -> Dict[str, Any]:
         """Check if password has been exposed in data breaches using the HaveIBeenPwned API."""
         password_hash = hashlib.sha1(password.encode()).hexdigest().upper()
         prefix, suffix = password_hash[:5], password_hash[5:]
@@ -61,7 +61,7 @@ class PasswordAnalyzer:
                 "status": "Error checking breach database"
             }
 
-    def generate_report(self, password: str) -> Dict[str, any]:
+    def generate_report(self, password: str) -> Dict[str, Any]:
         """Generate a comprehensive password analysis report using zxcvbn for strength estimation."""
         policy_check = self.check_password(password)
         breach_check = self.check_haveibeenpwned(password)
@@ -250,8 +250,8 @@ class PasswordAnalyzer:
         print(f"Found in data breaches: {compromised} ({(compromised/total)*100:.1f}%)")
         print(f"Average strength score: {avg_score:.1f}/100")
 
-    def _generate_recommendations(self, policy_check: Dict[str, bool], breach_check: Dict[str, any],
-                                  zxcvbn_feedback: Dict[str, any]) -> List[str]:
+    def _generate_recommendations(self, policy_check: Dict[str, bool], breach_check: Dict[str, Any],
+                                  zxcvbn_feedback: Dict[str, Any]) -> List[str]:
         """Generate recommendations for password improvement, including zxcvbn feedback."""
         recommendations = []
         if not policy_check["meets_all_requirements"]:
@@ -307,7 +307,7 @@ def main():
         print("=" * 50)
         print("\nPolicy Compliance:")
         for check, passed in report["policy_compliance"].items():
-            print(f"- {check.replace('_', ' ').title()}: {'✓' if passed else '✗'}")
+            print(f"- {check.replace('_', ' ').title()}: {'PASS' if passed else 'FAIL'}")
         
         print("\nBreach Status:")
         print(f"- {report['breach_status']['status']}")
